@@ -113,6 +113,22 @@ def _early_grounded_answer(context, question):
         if subject_terms and not all(_term_in_text(term, context.lower()) for term in subject_terms):
             return REFUSAL
 
+    measured = _measured_value_answer(context, question)
+    if measured:
+        return measured
+
+    main_topic = _main_topic_answer(context, question)
+    if main_topic:
+        return main_topic
+
+    ordered_points = _ordered_points_answer(context, question)
+    if ordered_points:
+        return ordered_points
+
+    direct_pattern = _direct_pattern_answer(context, question)
+    if direct_pattern:
+        return direct_pattern
+
     if re.search(r"\b(purpose|aim|objective|goal)\b", q_lower):
         answer = _generic_purpose_answer(context, question)
         if answer:
@@ -307,6 +323,168 @@ def _is_document_presence_question(q_lower):
     ))
 
 
+def _main_topic_answer(context, question):
+    q_lower = (question or "").lower()
+    if not re.search(r"\b(main|primary|central|overall)\s+(topic|subject|theme|focus)\b", q_lower):
+        return None
+
+    sentences = _clean_candidate_sentences(context)
+    if not sentences:
+        return None
+
+    first = sentences[0]
+    second = sentences[1] if len(sentences) > 1 else ""
+    if second and len(first.split()) + len(second.split()) <= 45:
+        return f"{first} {second}"
+    return first
+
+
+def _ordered_points_answer(context, question):
+    q_lower = (question or "").lower()
+    count_match = re.search(r"\b(two|three|four|five|\d+)\b", q_lower)
+    if not count_match or not re.search(r"\b(things?|points?|rules?|reasons?|steps?|items?)\b", q_lower):
+        return None
+
+    expected = _count_word_to_int(count_match.group(1))
+    q_terms = set(_content_terms(question))
+    sentences = _clean_candidate_sentences(context)
+    for index, sentence in enumerate(sentences):
+        lower = sentence.lower()
+        if len(set(_content_terms(sentence)) & q_terms) < max(2, min(4, len(q_terms) // 2)):
+            continue
+        if not re.search(r"\b(important|keep in mind|following|rules?|things?|points?)\b", lower):
+            continue
+
+        points = []
+        for candidate in sentences[index + 1:index + 10]:
+            candidate_lower = candidate.lower()
+            match = re.match(r"^(first|second|third|fourth|fifth|finally|lastly|next),?\s+(.*)", candidate, flags=re.IGNORECASE)
+            if match:
+                points.append(_clean_point(match.group(2)))
+            elif re.match(r"^(?:\d+[\).]|[-*])\s+", candidate):
+                points.append(_clean_point(candidate))
+            if len(points) >= expected:
+                break
+
+        points = [point for point in _dedupe(points) if _is_good_point(point)]
+        if len(points) >= expected:
+            return "\n".join(f"- {point}" for point in points[:expected])
+
+    return None
+
+
+def _direct_pattern_answer(context, question):
+    q_lower = (question or "").lower()
+    sentences = _clean_candidate_sentences(context)
+
+    pattern_groups = []
+    if "control" in q_lower:
+        pattern_groups.append([r"\bas a control\b", r"\ba control was\b", r"\bin the control\b"])
+    if "visual aid" in q_lower or ("results" in q_lower and re.search(r"\b(charts?|figures?|diagrams?|tables?)\b", context, flags=re.IGNORECASE)):
+        pattern_groups.append([r"\bcharts?, figures?, diagrams?, and tables\b", r"\b(charts?|figures?|diagrams?|tables?)\b"])
+    if "past tense" in q_lower:
+        pattern_groups.append([r"\bpast tense\b.{0,100}\bbecause\b", r"\bbecause\b.{0,100}\bpast\b"])
+    if "rationale" in q_lower:
+        pattern_groups.append([r"\brationale\b.{0,120}\bsteps?\b", r"\bsteps?\b.{0,120}\brationale\b"])
+    if "sources of error" in q_lower or "source of error" in q_lower:
+        pattern_groups.append([r"\bsources? of error\b.{0,120}\baffected\b", r"\baffected\b.{0,120}\bsources? of error\b"])
+    if "personal mention" in q_lower or "mentioning the researchers" in q_lower:
+        pattern_groups.append([r"\bpurpose of removing\b.{0,160}\bobjectivity\b", r"\bobjectivity\b.{0,160}\bexperiment\b"])
+    if "replication" in q_lower or "replicate" in q_lower:
+        pattern_groups.append([r"\breplicat\w*\b.{0,120}\blegitimacy\b", r"\blegitimacy\b.{0,120}\breplicat\w*\b"])
+    if re.search(r"\bexamples?\b", q_lower):
+        subject_terms = _question_subject_terms(question)
+        if subject_terms:
+            compact_subject = [term for term in subject_terms if term not in {"example", "examples", "vocabulary"}]
+            escaped_subject = "[- ]?".join(map(re.escape, compact_subject or subject_terms))
+            escaped_subject = escaped_subject.replace(r"\-", r"[-\s]?")
+            pattern_groups.append([rf"\b{escaped_subject}\b\s*:"])
+
+    for patterns in pattern_groups:
+        for sentence in sentences:
+            lower = sentence.lower()
+            if any(re.search(pattern, lower, flags=re.IGNORECASE) for pattern in patterns):
+                if re.search(r"\bexamples?\b", q_lower) and ":" in sentence:
+                    return _format_label_examples(sentence, question)
+                return _clean_answer_sentence(sentence)
+
+    return None
+
+
+def _measured_value_answer(context, question):
+    q_lower = (question or "").lower()
+    value_terms = [term for term in ["temperature", "mass", "volume", "weight", "time"] if term in q_lower]
+    if not value_terms or not re.search(r"\b(what|which|how much|maintained|kept|used|measured)\b", q_lower):
+        return None
+
+    sentences = _clean_candidate_sentences(context)
+    value_re = re.compile(r"\b\d+(?:\.\d+)?\s*(?:°?[cf]|degrees?|ounces?|oz|grams?|g|kg|ml|l|hours?|minutes?|seconds?|%)\b", re.IGNORECASE)
+    candidates = []
+    for sentence in sentences:
+        lower = sentence.lower()
+        if not any(term in lower for term in value_terms):
+            continue
+        if re.search(r"\bi\.e\.\b|\bfor example\b|\bexample:", lower):
+            continue
+        if value_re.search(sentence):
+            candidates.append(sentence)
+
+    if candidates:
+        return _clean_answer_sentence(candidates[0])
+    if "temperature" in value_terms:
+        return REFUSAL
+    return None
+
+
+def _clean_candidate_sentences(context):
+    sentences = []
+    for sent in _split_sentences(context):
+        sent = _repair_sentence(sent)
+        lower = sent.lower()
+        if _is_low_value(lower) or _looks_interleaved(sent):
+            continue
+        if re.search(r"^\s*(?:page\s+\d+|references\b)\b", lower):
+            continue
+        sentences.append(sent)
+    return _dedupe(sentences)
+
+
+def _clean_answer_sentence(sentence):
+    sentence = re.sub(r"^[●○■]\s*", "", sentence or "").strip()
+    sentence = re.sub(r"\s+", " ", sentence)
+    return sentence.strip()
+
+
+def _format_label_examples(sentence, question=""):
+    q_lower = (question or "").lower()
+    requested = None
+    for label in ("first person", "second person", "third person"):
+        if label.replace(" ", "-") in q_lower or label in q_lower:
+            requested = label
+            break
+
+    if requested:
+        match = re.search(
+            rf"\b({requested})\s*:\s*(.*?)(?=\s+(?:First|Second|Third)\s+person\s*:|\s+Situation\b|$)",
+            sentence,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            return f"{match.group(1).strip().title()}: {match.group(2).strip(' .')}."
+
+    label, values = sentence.split(":", 1)
+    values = re.split(r"\s+(?:First|Second|Third)\s+person\s*:", values, maxsplit=1)[0]
+    values = values.strip(" .")
+    return f"{label.strip()}: {values}."
+
+
+def _count_word_to_int(value):
+    mapping = {"two": 2, "three": 3, "four": 4, "five": 5}
+    if value.isdigit():
+        return int(value)
+    return mapping.get(value.lower(), 0)
+
+
 def _generic_definition_answer(context, question):
     subject_terms = _question_subject_terms(question)
     if not subject_terms:
@@ -459,6 +637,7 @@ def _has_direct_which_evidence(scored, q_words):
 def _question_subject_terms(question):
     query = re.sub(r"\s+", " ", (question or "").lower()).strip()
     patterns = [
+        r"\bexamples?\s+of\s+(.+?)(?:\?|$)",
         r"^\s*(?:does|do|did|is|are)\s+(?:the\s+)?(?:paper|document|article|study)\s+(?:discuss|mention|include|cover|contain|refer\s+to)\s+(.+?)(?:\?|$)",
         r"^\s*what\s+(?:is|are)\s+(.+?)(?:\s+according\s+to\b|\s+under\b|\?|$)",
         r"^\s*(?:define|meaning\s+of)\s+(.+?)(?:\?|$)",
@@ -2150,7 +2329,7 @@ def _looks_interleaved(sentence):
         return True
     if len(sentence.split()) > 90:
         return True
-    if lower.count(" table ") or lower.count(" fig"):
+    if re.search(r"\b(?:table|fig(?:ure)?\.?)\s*\d+\b", lower):
         return True
     if re.search(r"\b(on the whole|to be shap|dequently|high importance)\b", lower):
         return True

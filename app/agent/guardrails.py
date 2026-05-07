@@ -283,6 +283,7 @@ def _topic_terms(query):
 def _subject_terms(query):
     query_lower = _normalize_question(query)
     patterns = [
+        r"\bexamples?\s+of\s+(.+?)(?:\?|$)",
         r"\b(?:role|roles|importance|impact|effect|effects|benefits?|purpose|contributions?)\s+of\s+(.+?)(?:\s+in\s+|\s+for\s+|\?|$)",
         r"\b(?:types?|kinds?|categories|classifications?|forms?|sections?|parts?|components?|elements?|stages?|steps?)\s+(?:involved\s+in|of)\s+(.+?)(?:\?|$)",
         r"\b(?:problems?|challenges?|issues?|difficulties|barriers)\s+(?:faced\s+by|of|before|related\s+to)\s+(.+?)(?:\?|$)",
@@ -290,7 +291,9 @@ def _subject_terms(query):
         r"\b(?:main|major|primary)\s+(?:issue|problem|reason|cause)\s+(?:in|of|with)\s+(.+?)(?:\?|$)",
     ]
 
-    ignored = LIST_WORDS | PROBLEM_WORDS | EXPLANATORY_WORDS | {"case", "study", "simple", "words"}
+    ignored = LIST_WORDS | PROBLEM_WORDS | EXPLANATORY_WORDS | {
+        "case", "study", "simple", "words", "example", "examples", "vocabulary",
+    }
     for pattern in patterns:
         match = re.search(pattern, query_lower)
         if match:
@@ -338,10 +341,18 @@ def _normalize_question(query):
 
 
 def _count_term_hits(terms, text_lower):
-    return sum(1 for term in terms if any(
-        re.search(rf"\b{re.escape(variant)}\b", text_lower)
-        for variant in _term_variants(term)
-    ))
+    return sum(1 for term in terms if _term_matches(term, text_lower))
+
+
+def _term_matches(term, text_lower):
+    for variant in _term_variants(term):
+        if re.search(rf"\b{re.escape(variant)}\b", text_lower):
+            return True
+        if "-" in variant:
+            flexible = re.escape(variant).replace(r"\-", r"[-\s]?")
+            if re.search(rf"\b{flexible}\b", text_lower):
+                return True
+    return False
 
 
 def _cue_score(text_lower, cues):
@@ -440,6 +451,10 @@ def _term_variants(term):
         variants.add("importance")
     if term == "importance":
         variants.add("important")
+
+    if "-" in term:
+        variants.add(term.replace("-", ""))
+        variants.add(term.replace("-", " "))
 
     if term.endswith("an") and len(term) > 4:
         variants.add(term[:-2])
