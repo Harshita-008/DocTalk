@@ -50,7 +50,10 @@ async def health_check():
 async def upload_document(file: UploadFile = File(...)):
     global DB, retriever
 
-    os.makedirs("data", exist_ok=True)
+    # Vercel serverless functions only allow writes to /tmp.
+    # Use /tmp when available (serverless), otherwise fall back to local data/.
+    upload_dir = "/tmp" if os.path.isdir("/tmp") else "data"
+    os.makedirs(upload_dir, exist_ok=True)
     filename = os.path.basename(file.filename or "")
     extension = _detect_upload_extension(filename, file.content_type)
     if extension not in SUPPORTED_EXTENSIONS:
@@ -62,7 +65,7 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=detail)
 
     safe_name = re.sub(r"[^a-zA-Z0-9_.-]", "_", filename)
-    file_path = os.path.join("data", f"{uuid.uuid4().hex}_{safe_name}")
+    file_path = os.path.join(upload_dir, f"{uuid.uuid4().hex}_{safe_name}")
 
     total_size = 0
     try:
