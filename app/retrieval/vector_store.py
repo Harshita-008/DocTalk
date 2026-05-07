@@ -1,12 +1,10 @@
 import chromadb
-from app.config import CHROMADB_API_KEY
 
-from app.config import EMBEDDING_BATCH_SIZE
+from app.config import CHROMADB_API_KEY, EMBEDDING_BATCH_SIZE
 from app.ingestion.embedder import get_embeddings
 
 
 COLLECTION_NAME = "pdf_docs"
-DB_PATH = "./data/db"
 
 
 class VectorStore:

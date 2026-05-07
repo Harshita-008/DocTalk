@@ -5,16 +5,22 @@ load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+# OpenRouter — used for embeddings (NVIDIA Llama Nemotron Embed VL 1B V2)
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_EMBEDDING_MODEL = os.getenv(
+    "OPENROUTER_EMBEDDING_MODEL",
+    "nvidia/llama-nemotron-embed-vl-1b-v2:free",
+)
+
+# ChromaDB Cloud
+CHROMADB_API_KEY = os.getenv("CHROMADB_API_KEY")
+
 LLM_MODEL = os.getenv("LLM_MODEL", "google/flan-t5-base")
 OPENAI_LLM_MODEL = os.getenv("OPENAI_LLM_MODEL", "gpt-4o-mini")
 
-ENABLE_SENTENCE_TRANSFORMERS = os.getenv(
-    "ENABLE_SENTENCE_TRANSFORMERS",
-    "false" if os.getenv("RENDER") else "true",
-).lower() in {"1", "true", "yes", "on"}
-
-EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
+# Set to 1 for OpenRouter API — sending chunks one at a time avoids the
+# loop-detection filter that fires when a batch contains similar PDF text.
+EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "1"))
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "10"))
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 

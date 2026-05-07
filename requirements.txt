@@ -6,4 +6,3 @@ pydantic
 python-dotenv
 chromadb
 pypdf
-sentence-transformers

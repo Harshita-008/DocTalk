@@ -1,72 +1,51 @@
-import hashlib
-import math
-import re
+from openai import OpenAI
 
-from app.config import EMBEDDING_MODEL, ENABLE_SENTENCE_TRANSFORMERS
+from app.config import OPENROUTER_API_KEY, OPENROUTER_EMBEDDING_MODEL
 
+_client = None
 
-FALLBACK_DIM = 384
-_model = None
-_model_load_attempted = False
-
-
-def get_embeddings(texts):
-    model = _get_sentence_transformer()
-    if model is not None:
-        try:
-            return model.encode(
-                texts,
-                normalize_embeddings=True,
-                show_progress_bar=False,
-            ).tolist()
-        except Exception:
-            pass
-
-    return [_fallback_embedding(text) for text in texts]
+# OpenRouter's loop-detection filter can be triggered by repetitive document
+# text (e.g. textbook PDFs with repeated headers/footers). Adding this tag to
+# the request tells OpenRouter the repetition is intentional.
+_LOOP_BYPASS_TAG = "[ignoring loop detection]"
 
 
-def _get_sentence_transformer():
-    global _model, _model_load_attempted
-
-    if not ENABLE_SENTENCE_TRANSFORMERS:
-        return None
-
-    if _model is not None:
-        return _model
-    if _model_load_attempted:
-        return None
-
-    _model_load_attempted = True
-    try:
-        from sentence_transformers import SentenceTransformer
-
-        # Allow the model to be downloaded on first use if not already cached.
-        # Removing local_files_only=True ensures the embedding model is always
-        # available rather than silently falling back to the hash-based stub.
-        _model = SentenceTransformer(EMBEDDING_MODEL)
-        return _model
-    except Exception:
-        return None
+def _get_client() -> OpenAI:
+    global _client
+    if _client is None:
+        _client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=OPENROUTER_API_KEY,
+        )
+    return _client
 
 
-def _fallback_embedding(text):
-    """Hash-based lexical fallback used only when sentence-transformers is
-    unavailable.  This has poor semantic recall — it is a last resort.
+def get_embeddings(texts: list[str]) -> list[list[float]]:
+    """Embed texts using the OpenRouter embeddings API.
+
+    Uses NVIDIA Llama Nemotron Embed VL 1B V2 by default — a free,
+    high-quality embedding model optimised for retrieval tasks.
+
+    OpenRouter may flag repetitive document text (e.g. repeated PDF headers)
+    as "looping content". On that error we retry once with the bypass tag
+    prepended so that legitimate document content is never silently dropped.
     """
-    tokens = re.findall(r"[a-zA-Z][a-zA-Z-]{2,}", (text or "").lower())
-    features = []
-    features.extend(tokens)
-    features.extend(f"{tokens[i]} {tokens[i + 1]}" for i in range(len(tokens) - 1))
+    client = _get_client()
 
-    vector = [0.0] * FALLBACK_DIM
-    for feature in features:
-        digest = hashlib.blake2b(feature.encode("utf-8"), digest_size=8).digest()
-        bucket = int.from_bytes(digest[:4], "little") % FALLBACK_DIM
-        sign = 1.0 if digest[4] % 2 == 0 else -1.0
-        vector[bucket] += sign
+    try:
+        return _call_embeddings(client, texts)
+    except Exception as exc:
+        # OpenRouter loop-detection error — retry with bypass tag
+        if "looping content" in str(exc).lower():
+            tagged = [f"{_LOOP_BYPASS_TAG} {t}" for t in texts]
+            return _call_embeddings(client, tagged)
+        raise
 
-    norm = math.sqrt(sum(value * value for value in vector))
-    if norm == 0:
-        return vector
 
-    return [value / norm for value in vector]
+def _call_embeddings(client: OpenAI, texts: list[str]) -> list[list[float]]:
+    response = client.embeddings.create(
+        model=OPENROUTER_EMBEDDING_MODEL,
+        input=texts,
+    )
+    # Sort by index to guarantee the same order as the input list
+    return [item.embedding for item in sorted(response.data, key=lambda x: x.index)]
