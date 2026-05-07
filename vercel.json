@@ -1,0 +1,11 @@
+{
+  "buildCommand": "pip install -r requirements.txt",
+  "functions": {
+    "app/main.py": {
+      "runtime": "python3.11"
+    }
+  },
+  "routes": [
+    { "src": "/(.*)", "dest": "app/main.py" }
+  ]
+}

@@ -1,0 +1,12 @@
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+.pycache-test/
+data/
+frontend/node_modules/
+*.sqlite
+*.sqlite3
+chroma.sqlite3
+.env
