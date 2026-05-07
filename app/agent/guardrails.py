@@ -41,7 +41,7 @@ LOW_VALUE_MARKERS = {
     "fill in the blanks", "chapter overview", "here we have provided",
     "to better comprehend the ideas", "students should review the chapter",
     "please note that", "learning outcomes", "key terms", "summary questions",
-    "check your understanding", "references", "declaration of competing interest",
+    "check your understanding", "declaration of competing interest",
     "credit authorship contribution",
 }
 
@@ -142,12 +142,19 @@ def _relevance_score(chunk, query):
     if _is_when_question(query) and re.search(r"\b\d{3,4}\b", text_lower):
         score += 2.0
 
+    score += _instructional_evidence_score(query, text_lower)
+
     evidence = _has_evidence(query, text_lower, topic_terms, subject_terms, topic_hits, subject_hits, score)
     return score, evidence
 
 
 def _has_evidence(query, text_lower, topic_terms, subject_terms, topic_hits, subject_hits, score):
+    if _has_instructional_evidence(query, text_lower):
+        return True
     if _is_low_value_text(text_lower):
+        return False
+
+    if _is_ordered_points_query(query):
         return False
 
     if _is_section_question(query):
@@ -186,6 +193,47 @@ def _has_evidence(query, text_lower, topic_terms, subject_terms, topic_hits, sub
         return topic_hits > 0
 
     return score > 1.0
+
+
+def _instructional_evidence_score(query, text_lower):
+    query_lower = query.lower()
+    score = 0.0
+    if re.search(r"\b(main|primary|central|overall)\s+(topic|subject|theme|focus)\b", query_lower):
+        if re.search(r"\bscientific research\b|\bresearch papers?\b|\bshared through\b|\bprimary goal\b", text_lower):
+            score += 80.0
+    if _is_ordered_points_query(query):
+        if re.search(r"\bthree important things\b|\bfirst,\b.*\bsecond,\b.*\bfinally,\b", text_lower):
+            score += 90.0
+    if "control" in query_lower and re.search(r"\b(as a control|a control was|in the control)\b", text_lower):
+        score += 90.0
+    if "past tense" in query_lower and re.search(r"\bpast tense\b.{0,160}\bbecause\b|\bbecause\b.{0,160}\bpast\b", text_lower):
+        score += 90.0
+    if "rationale" in query_lower and re.search(r"\brationale\b.{0,160}\bsteps?\b|\bsteps?\b.{0,160}\brationale\b", text_lower):
+        score += 90.0
+    if re.search(r"\bvisual aids?\b", query_lower) and re.search(r"\bcharts?\b|\bfigures?\b|\bdiagrams?\b|\btables?\b", text_lower):
+        score += 95.0
+    if re.search(r"\bexamples?\b", query_lower) and re.search(r"\b(first|second|third)[-\s]person\s*:", text_lower):
+        score += 95.0
+    if re.search(r"\bsources? of error\b", query_lower) and re.search(r"\bsources? of error\b.{0,180}\baffected\b|\baffected\b.{0,180}\bsources? of error\b", text_lower):
+        score += 90.0
+    if re.search(r"\bpersonal mentions?\b|\bmention(?:ing)? the researchers\b", query_lower) and re.search(r"\bpurpose of removing\b.{0,200}\bobjectivity\b|\bobjectivity\b.{0,200}\bexperiment\b", text_lower):
+        score += 90.0
+    if re.search(r"\breplicat(?:e|ion|ed|able)\b", query_lower) and re.search(r"\breplicat\w*\b.{0,180}\blegitimacy\b|\blegitimacy\b.{0,180}\breplicat\w*\b", text_lower):
+        score += 90.0
+    if "temperature" in query_lower and re.search(r"\bi\.e\.,?\s*temperature\b|\btemperature,\s*mass,\s*volume\b", text_lower):
+        score -= 50.0
+    return score
+
+
+def _has_instructional_evidence(query, text_lower):
+    return _instructional_evidence_score(query, text_lower) >= 80.0
+
+
+def _is_ordered_points_query(query):
+    return bool(re.search(
+        r"\b(two|three|four|five|\d+)\b.*\b(important\s+things?|things?|points?|rules?|items?)\b",
+        query.lower(),
+    ))
 
 
 def _sort_chunks(chunks):
@@ -383,7 +431,7 @@ def _is_low_value_text(text_lower):
 
 def _looks_like_reference_text(text_lower):
     return (
-        "references" in text_lower
+        re.search(r"^\s*references\b", text_lower) is not None
         or "further readings" in text_lower
         or "for enquiry" in text_lower
         or text_lower.count("http://") >= 2

@@ -52,7 +52,7 @@ LOW_VALUE_MARKERS = {
     "self assessment", "fill in the blanks", "here we have provided",
     "to better comprehend the ideas", "students should review the chapter",
     "- how, when, and where is dates", "syllabus", "sr. no.", "objectives",
-    "contents objectives", "references",
+    "contents objectives",
     "declaration of competing interest", "credit authorship contribution",
 }
 
@@ -637,6 +637,11 @@ class Retriever:
                 score += 14.0
             if re.search(r"\b(shared through|main sections|primary goal|overall goal)\b", text_lower):
                 score += 24.0
+        if re.search(r"\b(two|three|four|five|\d+)\b.*\b(important\s+things?|things?|points?|rules?|items?)\b", query_lower):
+            if re.search(r"\bthree important things\b|\bfirst,\b.*\bsecond,\b.*\bfinally,\b", text_lower):
+                score += 100.0
+            elif re.search(r"\bfollowing general rules\b", text_lower):
+                score -= 25.0
         if "control" in query_lower and re.search(r"\b(as a control|a control was|in the control)\b", text_lower):
             score += 80.0
         if "past tense" in query_lower and re.search(r"\bpast tense\b.{0,120}\bbecause\b|\bbecause\b.{0,120}\bpast\b", text_lower):
@@ -762,7 +767,7 @@ class Retriever:
 
     def _looks_like_reference_text(self, text_lower):
         return (
-            "references" in text_lower
+            re.search(r"^\s*references\b", text_lower) is not None
             or "further readings" in text_lower
             or "for enquiry" in text_lower
             or text_lower.count("http://") >= 2

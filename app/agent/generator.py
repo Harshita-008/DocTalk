@@ -465,7 +465,7 @@ def _format_label_examples(sentence, question=""):
 
     if requested:
         match = re.search(
-            rf"\b({requested})\s*:\s*(.*?)(?=\s+(?:First|Second|Third)\s+person\s*:|\s+Situation\b|$)",
+            rf"\b({requested})\s*:\s*(.*?)(?=\s+(?:First|Second|Third)\s+person\s*:|\s+(?:Passive|Active)\s+Voice\b|\s+Situation\b|$)",
             sentence,
             flags=re.IGNORECASE,
         )
