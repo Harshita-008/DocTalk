@@ -74,7 +74,7 @@ class VectorStore:
             )
 
     def query(self, query_text, top_k=5):
-        query_embedding = get_embeddings([query_text])[0]
+        query_embedding = get_embeddings([query_text], task_type="RETRIEVAL_QUERY")[0]
         count = self.collection.count()
 
         if count == 0:

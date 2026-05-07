@@ -1,51 +1,32 @@
-from openai import OpenAI
+from google import genai
+from google.genai import types
 
-from app.config import OPENROUTER_API_KEY, OPENROUTER_EMBEDDING_MODEL
+from app.config import GEMINI_API_KEY, GEMINI_EMBEDDING_MODEL
 
 _client = None
 
-# OpenRouter's loop-detection filter can be triggered by repetitive document
-# text (e.g. textbook PDFs with repeated headers/footers). Adding this tag to
-# the request tells OpenRouter the repetition is intentional.
-_LOOP_BYPASS_TAG = "[ignoring loop detection]"
 
-
-def _get_client() -> OpenAI:
+def _get_client() -> genai.Client:
     global _client
     if _client is None:
-        _client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=OPENROUTER_API_KEY,
-        )
+        _client = genai.Client(api_key=GEMINI_API_KEY)
     return _client
 
 
-def get_embeddings(texts: list[str]) -> list[list[float]]:
-    """Embed texts using the OpenRouter embeddings API.
+def get_embeddings(
+    texts: list[str],
+    task_type: str = "RETRIEVAL_DOCUMENT",
+) -> list[list[float]]:
+    """Embed texts using Google's Gemini embeddings API.
 
-    Uses NVIDIA Llama Nemotron Embed VL 1B V2 by default — a free,
-    high-quality embedding model optimised for retrieval tasks.
-
-    OpenRouter may flag repetitive document text (e.g. repeated PDF headers)
-    as "looping content". On that error we retry once with the bypass tag
-    prepended so that legitimate document content is never silently dropped.
+    Use task_type="RETRIEVAL_QUERY" when embedding search queries — Gemini
+    produces asymmetric document/query embeddings that align better when the
+    correct task type is set on each side.
     """
     client = _get_client()
-
-    try:
-        return _call_embeddings(client, texts)
-    except Exception as exc:
-        # OpenRouter loop-detection error — retry with bypass tag
-        if "looping content" in str(exc).lower():
-            tagged = [f"{_LOOP_BYPASS_TAG} {t}" for t in texts]
-            return _call_embeddings(client, tagged)
-        raise
-
-
-def _call_embeddings(client: OpenAI, texts: list[str]) -> list[list[float]]:
-    response = client.embeddings.create(
-        model=OPENROUTER_EMBEDDING_MODEL,
-        input=texts,
+    result = client.models.embed_content(
+        model=GEMINI_EMBEDDING_MODEL,
+        contents=texts,
+        config=types.EmbedContentConfig(task_type=task_type),
     )
-    # Sort by index to guarantee the same order as the input list
-    return [item.embedding for item in sorted(response.data, key=lambda x: x.index)]
+    return [embedding.values for embedding in result.embeddings]
