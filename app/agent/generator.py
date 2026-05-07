@@ -1,7 +1,18 @@
-import os
 import re
 
-from app.config import LLM_MODEL, OPENAI_LLM_MODEL
+from app.config import (
+    LLM_MODEL,
+    LLM_BASE_URL,
+    LLM_PROVIDER,
+    OPENAI_API_KEY,
+    OPENAI_BASE_URL,
+    OPENAI_LLM_MODEL,
+    OPENROUTER_API_KEY,
+    OPENROUTER_BASE_URL,
+    OPENROUTER_LLM_MODEL,
+    OPENROUTER_SITE_NAME,
+    OPENROUTER_SITE_URL,
+)
 from app.ingestion.pdf_loader import repair_spacing_artifacts
 
 
@@ -66,31 +77,28 @@ def generate_answer(context, question):
     if not _context_supports_question(clean_ctx, question):
         return REFUSAL
 
-    # First use deterministic section/fact extraction. This prevents an LLM
-    # from copying noisy syllabus, TOC, table, or footer text when the answer is
-    # already present in a recognizable document section.
-    focused = _academic_paper_answer(clean_ctx, question)
-    if focused:
-        return _polish_answer(focused)
-
-    focused = _textbook_answer(clean_ctx, question)
-    if focused:
-        return _polish_answer(focused)
-
-    # Primary generative path once context has been cleaned and focused checks
-    # have failed.
+    # Prefer the configured chat model for general document QA. The older
+    # deterministic paths below are intentionally kept as fallback only because
+    # they contain domain-specific shortcuts that should not outrank the
+    # retrieved evidence for arbitrary PDFs.
     answer = _openai_answer(clean_ctx, question)
     if answer:
-        return _polish_answer(answer)
+        polished = _polish_answer(answer)
+        if polished == REFUSAL or _is_answer_supported(question, polished, clean_ctx):
+            return polished
 
-    # Secondary: extractive heuristic
     extractive = _extractive_answer(clean_ctx, question)
     if extractive:
         polished = _polish_answer(extractive)
         if _is_answer_supported(question, polished, clean_ctx):
             return polished
 
-    # Last resort: local seq2seq model
+    focused = _textbook_answer(clean_ctx, question) or _academic_paper_answer(clean_ctx, question)
+    if focused:
+        polished = _polish_answer(focused)
+        if polished == REFUSAL or _is_answer_supported(question, polished, clean_ctx):
+            return polished
+
     model_ans = _model_answer(clean_ctx, question)
     if model_ans:
         polished = _polish_answer(model_ans)
@@ -105,7 +113,7 @@ def generate_answer(context, question):
 # ---------------------------------------------------------------------------
 
 def _openai_answer(context, question):
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key, model, base_url, default_headers = _llm_client_settings()
     if not api_key:
         return None
 
@@ -115,13 +123,19 @@ def _openai_answer(context, question):
     except Exception:
         return None
 
-    client = OpenAI(api_key=api_key)
+    client_kwargs = {"api_key": api_key}
+    if base_url:
+        client_kwargs["base_url"] = base_url
+    if default_headers:
+        client_kwargs["default_headers"] = default_headers
+
+    client = OpenAI(**client_kwargs)
     limited = _limit_context(context, max_words=2000)
     user_msg = f"Context:\n{limited}\n\nQuestion: {question}\nAnswer:"
 
     try:
         response = client.chat.completions.create(
-            model=OPENAI_LLM_MODEL,
+            model=model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_msg},
@@ -139,6 +153,60 @@ def _openai_answer(context, question):
     if _is_refusal(answer):
         return REFUSAL
     return answer
+
+
+def _llm_client_settings():
+    """Return OpenAI-compatible client settings for OpenAI or OpenRouter."""
+    if LLM_BASE_URL:
+        return OPENAI_API_KEY or OPENROUTER_API_KEY, _configured_model(), LLM_BASE_URL, _openrouter_headers()
+
+    if OPENROUTER_API_KEY:
+        return (
+            OPENROUTER_API_KEY,
+            OPENROUTER_LLM_MODEL,
+            OPENROUTER_BASE_URL,
+            _openrouter_headers(),
+        )
+
+    if OPENAI_API_KEY and (
+        OPENAI_API_KEY.startswith("sk-or-")
+        or LLM_PROVIDER == "openrouter"
+        or OPENAI_BASE_URL.rstrip("/") == OPENROUTER_BASE_URL.rstrip("/")
+        or "/" in (OPENAI_LLM_MODEL or "")
+    ):
+        return (
+            OPENAI_API_KEY,
+            _openrouter_model_from_env(),
+            OPENAI_BASE_URL or OPENROUTER_BASE_URL,
+            _openrouter_headers(),
+        )
+
+    return OPENAI_API_KEY, OPENAI_LLM_MODEL, OPENAI_BASE_URL or None, {}
+
+
+def _configured_model():
+    if LLM_PROVIDER == "openrouter" or "openrouter.ai" in LLM_BASE_URL:
+        return _openrouter_model_from_env()
+    return OPENAI_LLM_MODEL
+
+
+def _openrouter_model_from_env():
+    if OPENROUTER_LLM_MODEL:
+        return OPENROUTER_LLM_MODEL
+    if not OPENAI_LLM_MODEL:
+        return "openai/gpt-4o-mini"
+    if OPENAI_LLM_MODEL and "/" not in OPENAI_LLM_MODEL and OPENAI_LLM_MODEL.startswith(("gpt-", "o")):
+        return f"openai/{OPENAI_LLM_MODEL}"
+    return OPENAI_LLM_MODEL
+
+
+def _openrouter_headers():
+    headers = {}
+    if OPENROUTER_SITE_URL:
+        headers["HTTP-Referer"] = OPENROUTER_SITE_URL
+    if OPENROUTER_SITE_NAME:
+        headers["X-Title"] = OPENROUTER_SITE_NAME
+    return headers
 
 
 def _is_refusal(text):
@@ -218,6 +286,16 @@ def _extractive_answer(context, question):
     q_lower = question.lower()
     q_words = set(_content_terms(q_lower))
 
+    if re.search(r"\b(purpose|aim|objective|goal|why)\b", q_lower):
+        purpose = _generic_purpose_answer(context, question)
+        if purpose:
+            return purpose
+
+    if _is_definition_request(q_lower):
+        definition = _generic_definition_answer(context, question)
+        if definition:
+            return definition
+
     is_list_q = bool(q_words & LIST_CUES)
     is_problem_q = bool(q_words & PROBLEM_CUES)
     is_explain_q = bool(q_words & EXPLANATORY_CUES)
@@ -235,13 +313,202 @@ def _extractive_answer(context, question):
     if is_yn_q:
         return _yes_no_answer(scored, q_lower)
 
+    if q_lower.startswith("which ") and not _has_direct_which_evidence(scored, q_words):
+        return None
+
     if is_list_q or is_problem_q:
+        section_answer = _section_answer(context, question)
+        if section_answer:
+            return section_answer
         return _list_answer(scored, q_words, context)
 
     if is_explain_q:
         return _explanation_answer(scored)
 
     return _default_answer(scored)
+
+
+def _is_definition_request(q_lower):
+    return bool(re.search(r"^\s*(?:what\s+is|what\s+are|define|meaning\s+of)\b", q_lower))
+
+
+def _generic_definition_answer(context, question):
+    subject_terms = _question_subject_terms(question)
+    if not subject_terms:
+        return None
+
+    candidates = []
+    subject_phrase = " ".join(subject_terms)
+    for sent in _split_sentences(context):
+        repaired = _repair_sentence(sent)
+        lower = repaired.lower()
+        if _is_low_value(lower) or _looks_interleaved(repaired):
+            continue
+
+        term_hits = sum(1 for term in subject_terms if _term_in_text(term, lower))
+        if term_hits < len(subject_terms):
+            continue
+        if not re.search(r"\b(is|are|means|meaning|refers to|defined as|can be defined|known as)\b", lower):
+            continue
+
+        score = term_hits * 5
+        if subject_phrase and subject_phrase in lower:
+            score += 8
+        if re.search(rf"\b{re.escape(subject_terms[-1])}\b\s+(?:is|means|refers to|can be defined)", lower):
+            score += 6
+        if lower.startswith(subject_phrase):
+            score += 4
+        score -= max(0, len(repaired.split()) - 55) * 0.08
+        candidates.append((score, repaired))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return _truncate(candidates[0][1], 55)
+
+
+def _section_answer(context, question):
+    subject_terms = _question_subject_terms(question)
+    query_terms = set(_content_terms(question))
+    if not subject_terms:
+        return None
+
+    lines = [line.strip() for line in (context or "").splitlines() if line.strip()]
+    candidates = []
+    for index, line in enumerate(lines):
+        lower = line.lower()
+        if all(_term_in_text(term, lower) for term in subject_terms) and (
+            re.search(r"\b(kinds?|types?|categories|classification|classifications|forms?|following|include|includes)\b", lower)
+        ):
+            score = 1
+            if re.search(r"^\s*\d+(?:\.\d+)*\.?\s+", line):
+                score += 5
+            if ":" in line:
+                score += 3
+            if re.search(r"\b(kinds?|types?|categories|classification|classifications|forms?)\s+of\b", lower):
+                score += 4
+            candidates.append((score, index))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    start = candidates[0][1]
+
+    section_lines = []
+    for line in lines[start:start + 18]:
+        lower = line.lower()
+        if section_lines and re.search(r"^\s*\d+(?:\.\d+)*\s+[A-Z].+:\s*$", line):
+            break
+        if _is_low_value(lower):
+            continue
+        section_lines.append(line)
+
+    points = []
+    labeled_points = []
+    for sent in _split_sentences(" ".join(section_lines)):
+        sent = _repair_sentence(sent)
+        lower = sent.lower()
+        if _is_low_value(lower) or _looks_interleaved(sent):
+            continue
+        if re.search(r"^\s*(?:page\s+\d+|indian journal|issn)\b", lower):
+            continue
+        if re.search(r"\b(kinds?|types?|categories|classification|classifications)\s+of\b", lower):
+            continue
+        if re.search(r"\b[A-Za-z][A-Za-z /-]{2,50}:\s+", sent):
+            point = _clean_point(sent)
+            points.append(point)
+            labeled_points.append(point)
+        elif all(_term_in_text(term, lower) for term in subject_terms):
+            points.append(_clean_point(sent))
+
+    if len(labeled_points) >= 2:
+        points = labeled_points
+
+    points = [point for point in _dedupe(points) if _is_good_point(point)]
+    if len(points) < 2:
+        return None
+    return "\n".join(f"- {point}" for point in points[:8])
+
+
+def _generic_purpose_answer(context, question):
+    subject_terms = _question_subject_terms(question)
+    if not subject_terms:
+        return None
+
+    candidates = []
+    for sent in _split_sentences(context):
+        sent = _repair_sentence(sent)
+        lower = sent.lower()
+        if _is_low_value(lower) or _looks_interleaved(sent):
+            continue
+        term_hits = sum(1 for term in subject_terms if _term_in_text(term, lower))
+        has_subject_pronoun = "act" in subject_terms and re.search(r"\bpurpose\s+of\s+the\s+act\b", lower)
+        if term_hits < max(1, len(subject_terms) - 1) and not has_subject_pronoun:
+            continue
+        if not re.search(r"\b(purpose|aim|objective|goal|serves as|was to|is to|intended to|passed|enacted)\b", lower):
+            continue
+        score = term_hits * 4
+        if has_subject_pronoun:
+            score += 12
+        if re.search(r"\bpurpose\b|\bwas to\b|\bis to\b", lower):
+            score += 8
+        if "purpose" in question.lower() and "purpose" in lower:
+            score += 8
+        score -= max(0, len(sent.split()) - 65) * 0.06
+        candidates.append((score, sent))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return _truncate(candidates[0][1], 65)
+
+
+def _has_direct_which_evidence(scored, q_words):
+    important = {
+        word for word in q_words
+        if word not in {"which", "most", "according", "paper", "document"}
+    }
+    if not important:
+        return bool(scored)
+    needed = max(2, int(len(important) * 0.65))
+    for sent, _ in scored[:5]:
+        words = set(_content_terms(sent))
+        if len(words & important) >= needed:
+            return True
+    return False
+
+
+def _question_subject_terms(question):
+    query = re.sub(r"\s+", " ", (question or "").lower()).strip()
+    patterns = [
+        r"^\s*what\s+(?:is|are)\s+(.+?)(?:\s+according\s+to\b|\s+under\b|\?|$)",
+        r"^\s*(?:define|meaning\s+of)\s+(.+?)(?:\?|$)",
+        r"\b(?:types?|kinds?|categories|classifications?|forms?)\s+(?:of\s+)?(.+?)(?:\s+discussed\b|\s+in\b|\?|$)",
+    ]
+    ignored = LIST_CUES | PROBLEM_CUES | EXPLANATORY_CUES | {
+        "paper", "document", "different", "discussed", "according", "provided",
+    }
+    for pattern in patterns:
+        match = re.search(pattern, query)
+        if not match:
+            continue
+        terms = [term for term in _content_terms(match.group(1)) if term not in ignored]
+        if terms:
+            return terms
+    return [term for term in _content_terms(query) if term not in ignored]
+
+
+def _term_in_text(term, text_lower):
+    variants = {term}
+    if term.endswith("s") and len(term) > 4:
+        variants.add(term[:-1])
+    elif len(term) > 3:
+        variants.add(term + "s")
+    if term.endswith("y") and len(term) > 5:
+        variants.add(term[:-1] + "ies")
+    if term.endswith("ies") and len(term) > 5:
+        variants.add(term[:-3] + "y")
+    return any(re.search(rf"\b{re.escape(variant)}\b", text_lower) for variant in variants)
 
 
 def _yes_no_answer(scored, q_lower):

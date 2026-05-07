@@ -4,6 +4,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "").lower()
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL", "")
+OPENROUTER_SITE_NAME = os.getenv("OPENROUTER_SITE_NAME", "DocTalk")
 
 # Google Gemini — used for embeddings (gemini-embedding-001)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -14,6 +21,7 @@ CHROMADB_API_KEY = os.getenv("CHROMADB_API_KEY")
 
 LLM_MODEL = os.getenv("LLM_MODEL", "google/flan-t5-base")
 OPENAI_LLM_MODEL = os.getenv("OPENAI_LLM_MODEL", "gpt-4o-mini")
+OPENROUTER_LLM_MODEL = os.getenv("OPENROUTER_LLM_MODEL", "")
 
 EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "10"))

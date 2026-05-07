@@ -49,10 +49,10 @@ This keeps retrieved context more coherent than fixed-size splitting alone.
 
 - Backend: Python, FastAPI, Uvicorn
 - Frontend: React, Vite
-- Document loading: PyMuPDF, pypdf, LangChain document objects
-- Embeddings: Sentence Transformers with fallback lexical embeddings
+- Document loading: pypdf, with optional PyMuPDF support when installed locally
+- Embeddings: Gemini embeddings
 - Vector database: ChromaDB
-- Generation: OpenAI API when configured, with local fallback behavior
+- Generation: OpenRouter or OpenAI-compatible chat completion, with extractive fallback behavior
 
 ## Project Structure
 
@@ -115,10 +115,19 @@ pip install -r requirements.txt
 Create a `.env` file in the project root:
 
 ```env
-OPENAI_API_KEY=your_openai_api_key
-OPENAI_LLM_MODEL=gpt-4o-mini
-EMBEDDING_MODEL=all-MiniLM-L6-v2
-ENABLE_SENTENCE_TRANSFORMERS=true
+GEMINI_API_KEY=your_gemini_api_key
+CHROMADB_API_KEY=your_chromadb_api_key
+OPENROUTER_API_KEY=your_openrouter_api_key
+OPENROUTER_LLM_MODEL=openai/gpt-4o-mini
+
+# If your deployment stores the OpenRouter key in OPENAI_API_KEY instead:
+# LLM_PROVIDER=openrouter
+# OPENAI_API_KEY=your_openrouter_api_key
+# OPENAI_LLM_MODEL=openai/gpt-4o-mini
+
+# Optional if using OpenAI directly instead of OpenRouter:
+# OPENAI_API_KEY=your_openai_api_key
+# OPENAI_LLM_MODEL=gpt-4o-mini
 ```
 
 Start the backend:
