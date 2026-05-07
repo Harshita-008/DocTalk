@@ -272,36 +272,8 @@ def _select_citations(answer, query, chunks):
         page_scores,
         key=lambda page: (-page_scores[page], page_order.get(page, 9999), page),
     )
-    max_pages = 3 if answer.count("- ") >= 3 else 2
+    max_pages = 3 if answer.count("- ") >= 3 else 1
     return [f"Page {page}" for page in sorted(ordered_pages[:max_pages])]
-
-
-def _anchored_citation_pages(query, chunks):
-    """Find pages whose text shares the most content terms with the query.
-
-    Returns at most 2 candidate pages with high query-term overlap, or an
-    empty list when no chunk clears the threshold (citation falls back to the
-    general scoring path in _select_citations).
-    """
-    query_terms = set(_content_terms(query))
-    if not query_terms or not chunks:
-        return []
-
-    page_hits = {}
-    for chunk in chunks:
-        text = f"{chunk.get('text', '')}\n{chunk.get('window_text', '')}".lower()
-        chunk_terms = set(_content_terms(text))
-        overlap = len(query_terms & chunk_terms)
-        page = int(chunk.get("page", 0) or 0)
-        if page > 0 and overlap > 0:
-            page_hits[page] = max(page_hits.get(page, 0), overlap)
-
-    if not page_hits:
-        return []
-
-    threshold = max(page_hits.values()) * 0.6
-    strong = [p for p, hits in page_hits.items() if hits >= threshold]
-    return sorted(strong)[:2]
 
 
 def _content_terms(text):

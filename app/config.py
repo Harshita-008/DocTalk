@@ -19,7 +19,6 @@ GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-0
 # ChromaDB Cloud
 CHROMADB_API_KEY = os.getenv("CHROMADB_API_KEY")
 
-LLM_MODEL = os.getenv("LLM_MODEL", "google/flan-t5-base")
 OPENAI_LLM_MODEL = os.getenv("OPENAI_LLM_MODEL", "gpt-4o-mini")
 OPENROUTER_LLM_MODEL = os.getenv("OPENROUTER_LLM_MODEL", "")
 

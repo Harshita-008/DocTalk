@@ -2,14 +2,6 @@ import re
 
 from app.config import CHUNK_OVERLAP, CHUNK_SIZE, CONTEXT_WINDOW_SIZE
 
-try:
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-except Exception:
-    try:
-        from langchain.text_splitter import RecursiveCharacterTextSplitter
-    except Exception:
-        RecursiveCharacterTextSplitter = None
-
 
 MIN_CHUNK_WORDS = 18
 MIN_FALLBACK_WORDS = 5
@@ -167,16 +159,6 @@ def _unit_words(unit):
 
 
 def _split_long_unit(unit, chunk_size):
-    if RecursiveCharacterTextSplitter is not None:
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=max(chunk_size * 6, 500),
-            chunk_overlap=max(CHUNK_OVERLAP * 6, 80),
-            separators=["\n\n", "\n", ". ", " ", ""],
-        )
-        pieces = [piece.strip() for piece in splitter.split_text(unit) if piece.strip()]
-        if pieces:
-            return pieces
-
     sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", unit) if part.strip()]
     if len(sentences) > 1 and max(_unit_words(sentence) for sentence in sentences) < chunk_size:
         return sentences

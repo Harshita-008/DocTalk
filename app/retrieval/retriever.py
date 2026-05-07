@@ -1,5 +1,4 @@
 import re
-from collections import Counter
 
 from app.config import MAX_CONTEXT_CHUNKS, RERANK_TOP_N, SIMILARITY_THRESHOLD, TOP_K
 from app.retrieval.vector_store import VectorStore

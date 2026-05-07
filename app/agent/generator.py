@@ -1,7 +1,6 @@
 import re
 
 from app.config import (
-    LLM_MODEL,
     LLM_BASE_URL,
     LLM_PROVIDER,
     OPENAI_API_KEY,
@@ -66,10 +65,6 @@ LOW_VALUE_MARKERS = {
     "do a market research",
 }
 
-_TOKENIZER = None
-_MODEL = None
-
-
 def generate_answer(context, question):
     clean_ctx = _clean_context(context)
     if not clean_ctx:
@@ -104,12 +99,6 @@ def generate_answer(context, question):
         if polished == REFUSAL or _is_answer_supported(question, polished, clean_ctx):
             return polished
 
-    model_ans = _model_answer(clean_ctx, question)
-    if model_ans:
-        polished = _polish_answer(model_ans)
-        if _is_answer_supported(question, polished, clean_ctx):
-            return polished
-
     return REFUSAL
 
 
@@ -131,7 +120,6 @@ def _early_grounded_answer(context, question):
         if answer:
             return answer
 
-    q_words = set(_content_terms(question))
     if q_lower.startswith(("how ", "why ", "describe ", "discuss ")):
         answer = _extractive_answer(context, question)
         if answer:
@@ -255,65 +243,6 @@ def _is_refusal(text):
 
 
 # ---------------------------------------------------------------------------
-# Local seq2seq fallback
-# ---------------------------------------------------------------------------
-
-def _model_answer(context, question):
-    tokenizer, model = _load_seq2seq_model()
-    if tokenizer is None or model is None:
-        return None
-
-    prompt = (
-        "You are a precise document QA system. Answer using only the context below.\n"
-        "Rules:\n"
-        "- Give a clear, direct answer.\n"
-        "- Do not copy raw context or unrelated sentences.\n"
-        "- Keep answers short and structured.\n"
-        "- Use bullet points for lists or step-by-step explanations.\n"
-        "- If the context does not clearly contain the answer, reply exactly with the refusal sentence.\n\n"
-        f"Refusal sentence: {REFUSAL}\n\n"
-        f"Context:\n{_limit_context(context)}\n\n"
-        f"Question: {question}\nAnswer:"
-    )
-
-    try:
-        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024)
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=220,
-            num_beams=4,
-            no_repeat_ngram_size=3,
-            repetition_penalty=1.18,
-            early_stopping=True,
-        )
-        answer = tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
-    except Exception:
-        return None
-
-    answer = _remove_repeated_sentences(answer)
-    if not answer or len(answer.split()) < 4:
-        return None
-    if REFUSAL.lower() in answer.lower():
-        return REFUSAL
-    return answer
-
-
-def _load_seq2seq_model():
-    global _TOKENIZER, _MODEL
-    if _TOKENIZER is not None and _MODEL is not None:
-        return _TOKENIZER, _MODEL
-
-    try:
-        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-
-        _TOKENIZER = AutoTokenizer.from_pretrained(LLM_MODEL)
-        _MODEL = AutoModelForSeq2SeqLM.from_pretrained(LLM_MODEL)
-        return _TOKENIZER, _MODEL
-    except Exception:
-        return None, None
-
-
-# ---------------------------------------------------------------------------
 # Extractive fallback
 # ---------------------------------------------------------------------------
 
@@ -416,7 +345,6 @@ def _generic_definition_answer(context, question):
 
 def _section_answer(context, question):
     subject_terms = _question_subject_terms(question)
-    query_terms = set(_content_terms(question))
     if not subject_terms:
         return None
 
