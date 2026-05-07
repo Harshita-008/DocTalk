@@ -1,34 +1,43 @@
 # DocTalk
 
-DocTalk is a RAG-powered document chat application built for Assignment 03. A user can upload a PDF, TXT, or CSV file, the app indexes the document into a vector database, and the user can ask natural-language questions that are answered only from the uploaded document with page citations.
+DocTalk is a RAG-powered document question-answering backend. A user uploads a PDF, TXT, or CSV file, the backend extracts and chunks the document, stores embeddings in ChromaDB Cloud, and answers questions using only retrieved document context with page-level citations.
 
-Deployed link: https://doctalk-ysjx.onrender.com
+Frontend deployed link: https://doc-talk-frontend-nine.vercel.app/
+
+Frontend repository: https://github.com/Harshita-008/DocTalk-Frontend
 
 ## Features
 
 - Upload PDF, TXT, or CSV documents.
-- Extract text from uploaded files.
-- Split documents into structure-aware chunks.
-- Generate embeddings for chunks.
-- Store chunk embeddings and metadata in ChromaDB.
-- Retrieve relevant context using vector search, keyword scoring, and reranking.
-- Generate grounded answers using retrieved context.
-- Refuse questions that cannot be answered from the document.
-- Show page-level citations for answers.
-- Use a React frontend with a FastAPI backend.
+- Extract readable text from uploaded files.
+- Split documents into structure-aware chunks with overlap and page metadata.
+- Generate document and query embeddings with Gemini embeddings.
+- Store chunks, embeddings, page numbers, source metadata, and context windows in ChromaDB Cloud.
+- Retrieve context using vector search, keyword ranking, reranking, and guardrail filtering.
+- Generate answers with an OpenRouter/OpenAI-compatible chat model.
+- Use extractive grounding and support checks to reduce hallucinations.
+- Refuse questions that cannot be answered from the uploaded document.
+- Return page-level citations for supported answers.
+- Support a separate React/Vite frontend through CORS configuration.
 
 ## RAG Pipeline
 
 ```text
 Upload document
-  -> Load and extract text
-  -> Clean and chunk text
-  -> Generate embeddings
-  -> Store chunks in ChromaDB
-  -> Retrieve relevant chunks for a question
-  -> Filter noisy or unrelated context
-  -> Generate a grounded answer
-  -> Return answer with citations
+  -> Validate file type and size
+  -> Save upload temporarily
+  -> Extract text from PDF/TXT/CSV
+  -> Clean text and repair common PDF spacing artifacts
+  -> Split text into structured overlapping chunks
+  -> Generate Gemini embeddings for chunks
+  -> Upsert chunks, metadata, and embeddings into ChromaDB Cloud
+  -> Embed the user question
+  -> Retrieve vector candidates
+  -> Add keyword-ranked candidates
+  -> Rerank and filter noisy or weak evidence
+  -> Build grounded context from selected chunks
+  -> Generate or extract an answer using only context
+  -> Return answer with page citations
 ```
 
 ## Chunking Strategy
@@ -38,26 +47,31 @@ DocTalk uses a structure-aware chunking strategy implemented in `app/ingestion/c
 The chunker:
 
 - normalizes extracted text,
-- preserves useful structure such as headings, paragraphs, numbered lists, and labelled points,
-- removes low-value lines such as review questions or boilerplate,
-- creates overlapping chunks so nearby context is not lost,
-- stores metadata such as page number, chunk index, section title, and context window.
+- restores useful boundaries around headings, numbered lists, bullets, and labelled items,
+- removes low-value lines such as review questions, contents headings, and boilerplate,
+- splits long text into sentence/word-based chunks,
+- keeps configurable word overlap between chunks,
+- stores metadata such as page number, chunk index, section title, source name, source type, and context window.
 
-This keeps retrieved context more coherent than fixed-size splitting alone.
+This makes retrieval more reliable than plain fixed-size splitting while keeping the deployment lightweight.
 
 ## Tech Stack
 
 - Backend: Python, FastAPI, Uvicorn
-- Frontend: React, Vite
-- Document loading: pypdf, with optional PyMuPDF support when installed locally
-- Embeddings: Gemini embeddings
-- Vector database: ChromaDB
-- Generation: OpenRouter or OpenAI-compatible chat completion, with extractive fallback behavior
+- Deployment entrypoint: Vercel serverless function through `api/index.py`
+- Frontend: separate React/Vite repository
+- Document loading: `pypdf` for PDFs, standard Python readers for TXT/CSV
+- Embeddings: Google Gemini embeddings via `google-genai`
+- Vector database: ChromaDB Cloud
+- Generation: OpenRouter or OpenAI-compatible chat completions through the `openai` SDK
+- Configuration: environment variables loaded with `python-dotenv`
 
 ## Project Structure
 
 ```text
 DocTalk/
+|-- api/
+|   `-- index.py
 |-- app/
 |   |-- agent/
 |   |   |-- generator.py
@@ -73,21 +87,23 @@ DocTalk/
 |   |   `-- vector_store.py
 |   |-- config.py
 |   `-- main.py
-|-- frontend/
-|   |-- src/
-|   |-- index.html
-|   |-- package.json
-|   `-- vite.config.js
-|-- sample/
 |-- requirements.txt
 |-- runtime.txt
+|-- vercel.json
+|-- .vercelignore
 |-- .gitignore
 `-- README.md
 ```
 
+The frontend is maintained separately at:
+
+```text
+https://github.com/Harshita-008/DocTalk-Frontend
+```
+
 ## Local Setup
 
-Clone the repository:
+Clone the backend repository:
 
 ```bash
 git clone https://github.com/Harshita-008/DocTalk.git
@@ -112,39 +128,65 @@ Install backend dependencies:
 pip install -r requirements.txt
 ```
 
-Create a `.env` file in the project root:
+Create a `.env` file in the project root.
+
+If you store your OpenRouter key in `OPENAI_API_KEY`, use:
 
 ```env
-GEMINI_API_KEY=your_gemini_api_key
+OPENAI_API_KEY=your_openrouter_api_key
+OPENAI_LLM_MODEL=openai/gpt-4o-mini
+LLM_PROVIDER=openrouter
 CHROMADB_API_KEY=your_chromadb_api_key
-OPENROUTER_API_KEY=your_openrouter_api_key
-OPENROUTER_LLM_MODEL=openai/gpt-4o-mini
-
-# If your deployment stores the OpenRouter key in OPENAI_API_KEY instead:
-# LLM_PROVIDER=openrouter
-# OPENAI_API_KEY=your_openrouter_api_key
-# OPENAI_LLM_MODEL=openai/gpt-4o-mini
-
-# Optional if using OpenAI directly instead of OpenRouter:
-# OPENAI_API_KEY=your_openai_api_key
-# OPENAI_LLM_MODEL=gpt-4o-mini
+GEMINI_API_KEY=your_gemini_api_key
+FRONTEND_ORIGINS=http://localhost:5173,https://doc-talk-frontend-nine.vercel.app
 ```
 
-Start the backend:
+Alternatively, you can use the explicit OpenRouter variables:
+
+```env
+OPENROUTER_API_KEY=your_openrouter_api_key
+OPENROUTER_LLM_MODEL=openai/gpt-4o-mini
+CHROMADB_API_KEY=your_chromadb_api_key
+GEMINI_API_KEY=your_gemini_api_key
+FRONTEND_ORIGINS=http://localhost:5173,https://doc-talk-frontend-nine.vercel.app
+```
+
+Optional configuration:
+
+```env
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+MAX_UPLOAD_MB=10
+CHUNK_SIZE=350
+CHUNK_OVERLAP=70
+TOP_K=12
+MAX_CONTEXT_CHUNKS=3
+RERANK_TOP_N=3
+CONTEXT_WINDOW_SIZE=1
+SIMILARITY_THRESHOLD=0.20
+```
+
+Start the backend locally:
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-Install and start the frontend:
+The backend runs at:
+
+```text
+http://127.0.0.1:8000
+```
+
+For frontend development, use the separate frontend repository:
 
 ```bash
-cd frontend
+git clone https://github.com/Harshita-008/DocTalk-Frontend.git
+cd DocTalk-Frontend
 npm install
 npm run dev
 ```
 
-Open:
+Open the frontend locally:
 
 ```text
 http://localhost:5173
@@ -152,12 +194,13 @@ http://localhost:5173
 
 ## Usage
 
-1. Upload a PDF, TXT, or CSV document.
-2. Wait for indexing to complete.
-3. Ask questions about the document.
-4. Review the grounded answer and citations.
+1. Open the deployed frontend or the local frontend.
+2. Upload a PDF, TXT, or CSV document.
+3. Wait for the backend to extract, chunk, embed, and index the file.
+4. Ask questions about the uploaded document.
+5. Review the grounded answer and page citations.
 
-If the document does not contain the answer, the app returns:
+If the document does not contain enough information to answer, DocTalk returns:
 
 ```text
 I cannot answer this question from the provided document.
@@ -165,35 +208,35 @@ I cannot answer this question from the provided document.
 
 ## Sample Questions
 
-Use `sample/sample.pdf` to test the application.
+Use any readable PDF, TXT, or CSV document and ask questions that can be answered from that document.
 
-Valid questions:
+Valid examples:
 
-1. What is entrepreneurship?
-   Expected: A definition of entrepreneurship with citation.
+1. What is the main topic of the document?
+   Expected: A document-grounded summary with citation.
 
-2. What are types of entrepreneurship?
-   Expected: A list of entrepreneurship classifications with citations.
+2. What is [a term defined in the document]?
+   Expected: The definition found in the document with citation.
 
-3. What are the problems faced by entrepreneurs in India?
-   Expected: Bullet points grounded in the document.
+3. What are the types, steps, components, or categories discussed?
+   Expected: A bullet list when the document contains a list or section.
 
-4. Why is entrepreneurship important for economic development?
-   Expected: Bullet points explaining its economic importance.
+4. Why is [a concept from the document] important?
+   Expected: A concise explanation using only document evidence.
 
-5. What was the main issue in the Satyam case study?
-   Expected: A document-grounded answer identifying accounting fraud as the main issue.
+5. Describe [a framework, process, law, or policy mentioned in the document].
+   Expected: A focused answer grounded in the retrieved section.
 
-Invalid questions:
+Invalid examples:
 
-1. What is machine learning?
-   Expected: Refusal.
+1. Who is Elon Musk?
+   Expected: Refusal unless the uploaded document discusses him.
 
-2. Who is Elon Musk?
-   Expected: Refusal.
+2. What is blockchain-based cyber security?
+   Expected: Refusal unless the uploaded document contains that information.
 
 3. Write a Python program.
-   Expected: Refusal.
+   Expected: Refusal because it is not a document-grounded question.
 
 Expected refusal:
 
@@ -203,14 +246,17 @@ I cannot answer this question from the provided document.
 
 ## API Endpoints
 
-- `GET /` - health check
-- `POST /upload` - upload and index a document
-- `POST /chat?query=your_question` - ask a question
-- `GET /debug/retrieve?query=your_question` - inspect retrieved chunks
+- `GET /` - health check.
+- `POST /upload` - upload and index one document.
+- `POST /chat?query=your_question` - ask a question about the indexed document.
+- `GET /debug/retrieve?query=your_question` - inspect retrieved chunks for debugging.
 
 ## Limitations
 
 - Only one active uploaded document is indexed at a time.
+- Uploads are stored temporarily; Vercel/serverless environments use `/tmp`.
+- ChromaDB collection reset on upload means a new upload replaces the previous indexed document.
 - Scanned image-only PDFs are not supported because OCR is not included.
-- Citation granularity is page-level.
-- Very large or complex PDFs may require more memory on the deployed server.
+- Citation granularity is page-level, not sentence-level.
+- Very large, image-heavy, or complex PDFs may exceed memory, time, or upload limits.
+- The answer generator is restricted to retrieved document context and may refuse if retrieval does not find enough evidence.
