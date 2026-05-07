@@ -448,7 +448,7 @@ def _looks_like_reference_text(text_lower):
 
 def _has_list_cue_evidence(text_lower):
     return bool(re.search(
-        r"\b(classified|classification|categories|following|include|includes|consists?|comprises?|basis)\b",
+        r"\b(classified|classification|categories|following|include|includes|consists?|comprises?|basis|charts?|figures?|diagrams?|tables?)\b",
         text_lower,
     ))
 

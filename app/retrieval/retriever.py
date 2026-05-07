@@ -265,6 +265,9 @@ class Retriever:
         if not self._is_state_space_question(query) and re.search(r"\b(pid|control law|controller equations?|equations?)\b", query.lower()) and re.search(r"\b(control law is given by|control input is defined as|position error vector|gain matrices|gains are|derivative terms|closed-loop response using pid control)\b", text):
             return True
 
+        if self._has_instructional_evidence(query, text):
+            return True
+
         if self._is_low_value_text(text):
             return False
 
@@ -783,9 +786,21 @@ class Retriever:
 
     def _has_list_cue_evidence(self, text_lower):
         return bool(re.search(
-            r"\b(classified|classification|categories|following|include|includes|consists?|comprises?|basis)\b",
+            r"\b(classified|classification|categories|following|include|includes|consists?|comprises?|basis|charts?|figures?|diagrams?|tables?)\b",
             text_lower,
         ))
+
+    def _has_instructional_evidence(self, query, text_lower):
+        query_lower = query.lower()
+        if re.search(r"\bvisual aids?\b", query_lower):
+            return bool(re.search(r"\bcharts?\b|\bfigures?\b|\bdiagrams?\b|\btables?\b", text_lower))
+        if re.search(r"\b(three|two|four|five|\d+)\b.*\b(important\s+things?|things?|points?|rules?|items?)\b", query_lower):
+            return bool(re.search(r"\bthree important things\b|\bfirst,\b.*\bsecond,\b.*\bfinally,\b", text_lower))
+        if "past tense" in query_lower:
+            return bool(re.search(r"\bpast tense\b.{0,160}\bbecause\b|\bbecause\b.{0,160}\bpast\b", text_lower))
+        if re.search(r"\breplicat(?:e|ion|ed|able)\b", query_lower):
+            return bool(re.search(r"\breplicat\w*\b.{0,180}\blegitimacy\b|\blegitimacy\b.{0,180}\breplicat\w*\b", text_lower))
+        return False
 
     def _first_section_number(self, text):
         match = re.search(r"\b(\d+(?:\.\d+)+)\s+[A-Za-z]", text or "")
