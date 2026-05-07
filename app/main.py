@@ -229,11 +229,6 @@ GENERIC_CITATION_TERMS = {
 
 
 def _select_citations(answer, query, chunks):
-    anchored_pages = _anchored_citation_pages(query, chunks)
-    if anchored_pages:
-        max_pages = 3 if answer.count("- ") >= 3 else 2
-        return [f"Page {page}" for page in sorted(anchored_pages[:max_pages])]
-
     answer_terms = set(_content_terms(answer))
     distinctive_answer_terms = answer_terms - GENERIC_CITATION_TERMS
     query_terms = set(_content_terms(query))

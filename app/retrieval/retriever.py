@@ -761,7 +761,14 @@ class Retriever:
         return match.group(1) if match else None
 
     def _term_matches(self, term, text_lower):
-        return any(re.search(rf"\b{re.escape(variant)}\b", text_lower) for variant in self._term_variants(term))
+        for variant in self._term_variants(term):
+            if re.search(rf"\b{re.escape(variant)}\b", text_lower):
+                return True
+            if "-" in variant:
+                flexible = re.escape(variant).replace(r"\-", r"[-\s]?")
+                if re.search(rf"\b{flexible}\b", text_lower):
+                    return True
+        return False
 
     def _term_variants(self, term):
         variants = {term}
@@ -793,6 +800,10 @@ class Retriever:
             variants.add("importance")
         if term == "importance":
             variants.add("important")
+
+        if "-" in term:
+            variants.add(term.replace("-", ""))
+            variants.add(term.replace("-", " "))
 
         # Generic nation/adjective pairs (e.g. "america"/"american")
         if term.endswith("an") and len(term) > 5:

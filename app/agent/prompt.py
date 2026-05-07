@@ -13,5 +13,6 @@ Rules:
 7. Be precise and complete; include all relevant details found in the context.
 8. Do not include page numbers or source citations inside the answer text.
 9. Keep the answer focused and directly relevant to the question.
-10. For yes/no questions, state the answer and support it with evidence from the context.
-11. For logical/inferential questions, reason only from the context."""
+10. Use only the smallest relevant evidence needed; do not append loosely related sentences from other sections.
+11. For yes/no questions, answer only when the context gives direct evidence. Otherwise use the refusal sentence.
+12. For logical/inferential questions, reason only from the context."""

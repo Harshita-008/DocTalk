@@ -51,7 +51,8 @@ EXPLANATORY_CUES = {
     "responsibility", "responsibilities", "helps", "help", "provides",
     "provide", "creates", "create", "leads", "lead", "accelerates",
     "accelerate", "improves", "improve", "promotes", "promote",
-    "summarizes", "summarise", "summarize", "summary",
+    "summarizes", "summarise", "summarize", "summary", "describe",
+    "describes", "discuss", "discusses",
 }
 
 LOW_VALUE_MARKERS = {
@@ -76,6 +77,10 @@ def generate_answer(context, question):
 
     if not _context_supports_question(clean_ctx, question):
         return REFUSAL
+
+    early = _early_grounded_answer(clean_ctx, question)
+    if early:
+        return _polish_answer(early)
 
     # Prefer the configured chat model for general document QA. The older
     # deterministic paths below are intentionally kept as fallback only because
@@ -106,6 +111,36 @@ def generate_answer(context, question):
             return polished
 
     return REFUSAL
+
+
+def _early_grounded_answer(context, question):
+    q_lower = (question or "").lower()
+
+    if _is_document_presence_question(q_lower):
+        subject_terms = _question_subject_terms(question)
+        if subject_terms and not all(_term_in_text(term, context.lower()) for term in subject_terms):
+            return REFUSAL
+
+    if re.search(r"\b(purpose|aim|objective|goal)\b", q_lower):
+        answer = _generic_purpose_answer(context, question)
+        if answer:
+            return answer
+
+    if _is_definition_request(q_lower):
+        answer = _generic_definition_answer(context, question)
+        if answer:
+            return answer
+
+    q_words = set(_content_terms(question))
+    if q_lower.startswith(("how ", "why ", "describe ", "discuss ")):
+        answer = _extractive_answer(context, question)
+        if answer:
+            return answer
+
+    if _is_document_presence_question(q_lower):
+        return REFUSAL
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +333,7 @@ def _extractive_answer(context, question):
 
     is_list_q = bool(q_words & LIST_CUES)
     is_problem_q = bool(q_words & PROBLEM_CUES)
-    is_explain_q = bool(q_words & EXPLANATORY_CUES)
+    is_explain_q = bool(q_words & EXPLANATORY_CUES) or q_lower.startswith(("how ", "why ", "describe ", "discuss "))
     is_yn_q = q_lower.startswith(("is ", "are ", "was ", "were ", "do ", "does ",
                                    "did ", "can ", "could ", "should ", "will ", "has ", "have "))
 
@@ -323,13 +358,21 @@ def _extractive_answer(context, question):
         return _list_answer(scored, q_words, context)
 
     if is_explain_q:
-        return _explanation_answer(scored)
+        return _explanation_answer(scored, q_words)
 
     return _default_answer(scored)
 
 
 def _is_definition_request(q_lower):
     return bool(re.search(r"^\s*(?:what\s+is|what\s+are|define|meaning\s+of)\b", q_lower))
+
+
+def _is_document_presence_question(q_lower):
+    return bool(re.search(
+        r"^\s*(?:does|do|did|is|are)\s+(?:the\s+)?(?:paper|document|article|study)\s+"
+        r"(?:discuss|mention|include|cover|contain|refer\s+to)\b",
+        q_lower,
+    ))
 
 
 def _generic_definition_answer(context, question):
@@ -348,7 +391,7 @@ def _generic_definition_answer(context, question):
         term_hits = sum(1 for term in subject_terms if _term_in_text(term, lower))
         if term_hits < len(subject_terms):
             continue
-        if not re.search(r"\b(is|are|means|meaning|refers to|defined as|can be defined|known as)\b", lower):
+        if not re.search(r"\b(is|are|means|meaning|refers to|defined as|can be defined|known as)\b|,\s+(?:an?|the)\s+", lower):
             continue
 
         score = term_hits * 5
@@ -356,6 +399,10 @@ def _generic_definition_answer(context, question):
             score += 8
         if re.search(rf"\b{re.escape(subject_terms[-1])}\b\s+(?:is|means|refers to|can be defined)", lower):
             score += 6
+        if subject_phrase and re.search(rf"\b{re.escape(subject_phrase)}\b,\s+(?:an?|the)\s+", lower):
+            score += 12
+        if re.search(r"\bvirtual environment\b|\brefers to\b|\bdefined as\b", lower):
+            score += 4
         if lower.startswith(subject_phrase):
             score += 4
         score -= max(0, len(repaired.split()) - 55) * 0.08
@@ -481,6 +528,7 @@ def _has_direct_which_evidence(scored, q_words):
 def _question_subject_terms(question):
     query = re.sub(r"\s+", " ", (question or "").lower()).strip()
     patterns = [
+        r"^\s*(?:does|do|did|is|are)\s+(?:the\s+)?(?:paper|document|article|study)\s+(?:discuss|mention|include|cover|contain|refer\s+to)\s+(.+?)(?:\?|$)",
         r"^\s*what\s+(?:is|are)\s+(.+?)(?:\s+according\s+to\b|\s+under\b|\?|$)",
         r"^\s*(?:define|meaning\s+of)\s+(.+?)(?:\?|$)",
         r"\b(?:types?|kinds?|categories|classifications?|forms?)\s+(?:of\s+)?(.+?)(?:\s+discussed\b|\s+in\b|\?|$)",
@@ -508,7 +556,14 @@ def _term_in_text(term, text_lower):
         variants.add(term[:-1] + "ies")
     if term.endswith("ies") and len(term) > 5:
         variants.add(term[:-3] + "y")
-    return any(re.search(rf"\b{re.escape(variant)}\b", text_lower) for variant in variants)
+    for variant in variants:
+        if re.search(rf"\b{re.escape(variant)}\b", text_lower):
+            return True
+        if "-" in variant:
+            flexible = re.escape(variant).replace(r"\-", r"[-\s]?")
+            if re.search(rf"\b{flexible}\b", text_lower):
+                return True
+    return False
 
 
 def _yes_no_answer(scored, q_lower):
@@ -546,9 +601,28 @@ def _list_answer(scored, q_words, context):
     return "\n".join(bullets)
 
 
-def _explanation_answer(scored):
-    top = [s for s, _ in scored[:4]]
-    return " ".join(top).strip() if top else None
+def _explanation_answer(scored, q_words=None):
+    q_words = q_words or set()
+    selected = []
+    priority_terms = {word for word in q_words if "-" in word}
+    scan_limit = 24 if priority_terms else 8
+    for sent, overlap in scored[:scan_limit]:
+        sent = _repair_sentence(sent)
+        lower = sent.lower()
+        if _is_low_value(lower) or _looks_interleaved(sent):
+            continue
+        if priority_terms and not any(_term_in_text(term, lower) for term in priority_terms):
+            continue
+        words = set(_content_terms(sent))
+        if q_words and len(words & q_words) < max(1, min(2, len(q_words) // 2)):
+            continue
+        if re.search(r"^\s*(?:indian journal|issn|page\s+\d+)\b", lower):
+            continue
+        selected.append(sent)
+        if len(selected) >= 2:
+            break
+    selected = _dedupe(selected)
+    return " ".join(selected).strip() if selected else None
 
 
 def _default_answer(scored):
