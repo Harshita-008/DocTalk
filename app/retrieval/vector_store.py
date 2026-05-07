@@ -1,4 +1,5 @@
 import chromadb
+from app.config import CHROMADB_API_KEY
 
 from app.config import EMBEDDING_BATCH_SIZE
 from app.ingestion.embedder import get_embeddings
@@ -10,7 +11,11 @@ DB_PATH = "./data/db"
 
 class VectorStore:
     def __init__(self, reset=False):
-        self.client = chromadb.PersistentClient(path=DB_PATH)
+        self.client = chromadb.CloudClient(
+            api_key=CHROMADB_API_KEY,
+            tenant='b1a76c24-662d-4e22-b9e5-59bce8ad652b',
+            database='DocTalk'
+        )
 
         if reset:
             self._clear_collection()
