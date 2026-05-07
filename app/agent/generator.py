@@ -84,18 +84,21 @@ def generate_answer(context, question):
     answer = _openai_answer(clean_ctx, question)
     if answer:
         polished = _polish_answer(answer)
+        polished = _trim_answer_to_question(polished, question)
         if polished == REFUSAL or _is_answer_supported(question, polished, clean_ctx):
             return polished
 
     extractive = _extractive_answer(clean_ctx, question)
     if extractive:
         polished = _polish_answer(extractive)
+        polished = _trim_answer_to_question(polished, question)
         if _is_answer_supported(question, polished, clean_ctx):
             return polished
 
     focused = _textbook_answer(clean_ctx, question) or _academic_paper_answer(clean_ctx, question)
     if focused:
         polished = _polish_answer(focused)
+        polished = _trim_answer_to_question(polished, question)
         if polished == REFUSAL or _is_answer_supported(question, polished, clean_ctx):
             return polished
 
@@ -287,7 +290,7 @@ def _extractive_answer(context, question):
         return _list_answer(scored, q_words, context)
 
     if is_explain_q:
-        return _explanation_answer(scored, q_words)
+        return _explanation_answer(scored, q_words, q_lower)
 
     return _default_answer(scored)
 
@@ -529,11 +532,12 @@ def _list_answer(scored, q_words, context):
     return "\n".join(bullets)
 
 
-def _explanation_answer(scored, q_words=None):
+def _explanation_answer(scored, q_words=None, q_lower=""):
     q_words = q_words or set()
     selected = []
     priority_terms = {word for word in q_words if "-" in word}
     scan_limit = 24 if priority_terms else 8
+    max_sentences = 2 if _asks_for_multiple_points(q_lower) else 1
     for sent, overlap in scored[:scan_limit]:
         sent = _repair_sentence(sent)
         lower = sent.lower()
@@ -547,10 +551,18 @@ def _explanation_answer(scored, q_words=None):
         if re.search(r"^\s*(?:indian journal|issn|page\s+\d+)\b", lower):
             continue
         selected.append(sent)
-        if len(selected) >= 2:
+        if len(selected) >= max_sentences:
             break
     selected = _dedupe(selected)
     return " ".join(selected).strip() if selected else None
+
+
+def _asks_for_multiple_points(q_lower):
+    return bool(re.search(
+        r"\b(list|summari[sz]e|different|various|multiple|points?|reasons?|ways?|"
+        r"steps?|types?|kinds?|categories|features?|characteristics?|components?)\b",
+        q_lower or "",
+    ))
 
 
 def _default_answer(scored):
@@ -2460,6 +2472,45 @@ def _polish_answer(text):
     if text and text[0].islower():
         text = text[0].upper() + text[1:]
     return text
+
+
+def _trim_answer_to_question(answer, question):
+    if not answer or answer == REFUSAL:
+        return answer
+    if "\n-" in answer or re.search(r"\n\d+\.", answer):
+        return answer
+
+    q_lower = (question or "").lower()
+    if _asks_for_multiple_points(q_lower):
+        return answer
+    if not q_lower.startswith(("what ", "why ", "how ", "describe ", "define ", "meaning ")):
+        return answer
+
+    sentences = _split_sentences(answer)
+    if len(sentences) <= 1:
+        return answer
+
+    question_terms = set(_content_terms(question))
+    best_sentence = sentences[0]
+    best_score = -1
+    for index, sentence in enumerate(sentences[:4]):
+        lower = sentence.lower()
+        if _is_low_value(lower) or _looks_interleaved(sentence):
+            continue
+        terms = set(_content_terms(sentence))
+        score = len(question_terms & terms)
+        if index == 0:
+            score += 1
+        if q_lower.startswith(("why ", "how ")) and re.search(
+            r"\b(because|since|as|so that|in order to|to prevent|to protect|strives to|aims to|helps|therefore)\b",
+            lower,
+        ):
+            score += 2
+        if score > best_score:
+            best_score = score
+            best_sentence = sentence
+
+    return best_sentence.strip()
 
 
 def _remove_repeated_sentences(text):
